@@ -37,7 +37,7 @@ int s=0;
 int i=0;
 int j=0;
 int counter=0;
-int active_dtcs=0;
+unsigned int active_dtcs=0;
 /*μεταβλητές αποθήκευσης αποκωδηκοποιημένων δεδομένων κατάστασης του οχήματος*/
 int fstat;
 unsigned int maf1=0;
@@ -55,6 +55,11 @@ int stn_buffer[30];
 char bat[6];
 int menu=0;
 char value[3];
+int val=0;
+int threshold=95;
+int temp_thresh=95;
+int analogPin = A3; // potentiometer wiper (middle terminal) connected to analog pin 3
+                    // outside leads to ground and +5V
 
 /* Αρχικοποίηση βιβλιοθήκης που διαχειρίζεται την επικοινωνία με την οθόνη,
  με τους ακροδέκτες του Arduino που συνδέονται στην οθόνη  */
@@ -65,11 +70,14 @@ int button2State = 0;
 /* Η συνάρτηση που αρχικοποιεί τις βασικές ρυθμίσεις για την διασύνδεση
  των περιφερειακών και των λειτουργιών του προγράμματος */
 void setup() {
+  pinMode(9, OUTPUT);//Ορισμός ακροδέκτη 9 ως έξοδο ventilator mosfet
+  digitalWrite(9, LOW);//ventilator off
   Serial.begin(115200);//Εκίνηση της σειριακής επικοινωνίας με το STN1110 Baud 115200
   // set up the LCD's number of columns and rows:
   lcd.begin(numCols, numRows);//Ορισμός γραμμών και στηλών της οθόνης(2x16)
   pinMode(19, OUTPUT);//Ορισμός ακροδέκτη 19 ως έξοδο(LED 1)
-  pinMode(9, OUTPUT);//Ορισμός ακροδέκτη 9 ως έξοδο(LED 2)
+  
+
   pinMode(2,INPUT_PULLUP);//Ορισμός ακροδέκτη 2 ως είσοδο, ενεργοποιώντας την αντίσταση τερματισμού(Κουμπί 1)
   pinMode(3,INPUT_PULLUP);//Ορισμός ακροδέκτη 3 ως είσοδο, ενεργοποιώντας την αντίσταση τερματισμού(Κουμπί 2)
   attachInterrupt(digitalPinToInterrupt(2), button1, FALLING);/*Ορισμός διακοπής στην αρνητική ακμή του σήματος στον ακροδέκτη 2*/
@@ -111,6 +119,7 @@ void setup() {
   lcd.print(" L");
   //read_temp();
   //for(int i=0;i<s;i++){lcd.print(stn_buffer[i]);lcd.print(" ");}
+  menu=0;
   delay(5000);//περίμενε 5"
   sei();//ενεργοποίηση της εξυπηρέτησης των διακοπών
 }
@@ -127,7 +136,7 @@ void loop() {
  Το κουμπί 2 ενεργοποιεί την σελίδα 4 που περιέχει τους κωδικούς σφαλμάτων */
     if (button1State == 1) {delay(100);++menu;button1State =0;if(menu==4){menu=0;}sei();}/* Αν πατηθεί το κουμπί 1, πήγαινε στην επόμενη σελίδα  */
     if (button2State == 1) {delay(100);button2State =0;read_dtc();}/* Αν πατηθεί το κουμπί 1, πήγαινε στην σελίδα κωδικών σφαλμάτων */
-    
+    read_temp_threshold();
     switch (menu){
     case 0://Επίλεξε σελίδα πληροφοριών 1
          read_temp();//Διάβασε την θερμοκρασία του οχήματος
@@ -139,6 +148,7 @@ void loop() {
      read_cons();
      read_fuel_lvl();
      read_fstat();//Διάβασε κατάσταση κυκλώματος κινητήρα
+     read_temp();//Διάβασε την θερμοκρασία του οχήματος
          send2lcd2();//Στείλε τα δεδομένα στην οθόνη
       break;
     case 2://Επίλεξε σελίδα πληροφοριών 3
@@ -151,6 +161,7 @@ void loop() {
      read_cons();
      read_fterm();
      read_oxvolts();
+     read_temp();//Διάβασε την θερμοκρασία του οχήματος
          send2lcd4();//Στείλε τα δεδομένα στην οθόνη
       break;
         }
@@ -188,13 +199,38 @@ void stn_com(char* str){ //str είναι η εντολή που στέλνου�
   }
 }
 
+void read_temp_threshold(){
+  val = analogRead(analogPin);
+  if(val>=0 && val<85) threshold=50;
+  else if(val>=86 && val<170) threshold=92;
+  else if(val>=171 && val<255) threshold=93;
+  else if(val>=256 && val<340) threshold=94;
+  else if(val>=341 && val<425) threshold=95;
+  else if(val>=426 && val<510) threshold=96;
+  else if(val>=511 && val<595) threshold=97;
+  else if(val>=596 && val<680) threshold=98;
+  else if(val>=681 && val<765) threshold=99;
+  else if(val>=766 && val<850) threshold=100;
+  else if(val>=851 && val<935) threshold=101;
+  else if(val>=936) threshold=102;
+  if(threshold!=temp_thresh){temp_thresh=threshold;thresh_change();}    
+}
 
+
+void thresh_change(){
+  lcd.clear();
+  lcd.setCursor(1, 0);
+  lcd.print(threshold,DEC);
+  lcd.print("C Threshold");
+  delay(200);
+  
+}
 /* Συνάρτηση που διαβάζει και αποκωδηκοποιεί την τιμή της τρέχουσας θερμοκρασίας του ψυκτικού υγρού του οχήματος */
 void read_temp(){
        stn_com("0105\r");//AT command: Mode:01 PID: 05
        temp=stn_buffer[2]-40;//Α-40
-       if(temp>102){digitalWrite(19, HIGH);}/* Αν η θερμοκρασία του ψυκτικού είναι μεγαλύτερη των 102C, άναψε το LED 2 */
-       else{digitalWrite(19, LOW);}
+       if(temp>threshold && temp<250){digitalWrite(19, HIGH);digitalWrite(9, HIGH);}/* Αν η θερμοκρασία του ψυκτικού είναι μεγαλύτερη του threshold, άναψε το LED 2 και άνοιξε το ventilator*/
+       else{digitalWrite(19, LOW);digitalWrite(9, LOW);}
  }
 
 
@@ -395,7 +431,13 @@ void read_temp(){
   lcd.setCursor(0, 0);
   stn_com("0101\r");
   if(stn_buffer[2] & 0b10000000){ //if we got MIL ON and active DTCs
-    active_dtcs= stn_buffer[2]-0x80; // byte-128 to find how many active dtcs exist
+    active_dtcs= stn_buffer[2]-0x80; // byte-128 to find how many active dtcs exist cause of mil bit
+    lcd.print("MIL is ON!");
+    delay(2000);
+    lcd.clear();
+    lcd.setCursor(0, 0);}
+  else active_dtcs=stn_buffer[2]& 0b01111111;
+  if(active_dtcs){
     lcd.print(active_dtcs);
     lcd.print(" DTCs FOUND!");
     delay(3000);//Πάγωσε την οθόνη για 3" ώστε ο χρήστης να προλάβει να διαβάσει
@@ -442,7 +484,7 @@ void read_temp(){
   delay(10000);//Πάγωσε την οθόνη για 3" ώστε ο χρήστης να προλάβει να διαβάσει
   
   }
-  else{lcd.print("NO DTCs FOUND");delay(3000);}
+  else{lcd.print("NO DTCs FOUND");delay(2000);}
   }
   
    /* Συνάρτηση η οποία παίρνει σαν όρισμα ASCII χαρακτήρες(κάθε χαρακτήρας 1 byte) και επιστρέφει τον αντίστοιχο 10δικό.
