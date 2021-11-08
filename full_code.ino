@@ -327,7 +327,7 @@ void read_temp(){
         temp3=stn_buffer[4];
         if(temp2==0){(temp2=temp3*2);}
         else if(temp2<=127){temp2=(temp2*512)+(temp3*2);}
-        else{temp2=(temp2-254)*512+temp3*2;}
+        else{temp2=((temp2-254)*512)+temp3*2;}
         temp2=(float)(temp2-32)*(float)(0.56); //Fahrenheit to Celsius
 
         stn_com("221139\r"); //Διάβασε την θερμοκρασία του ψυκτικού(αισθητήρας 2)(MODE=22 και PID=1139)
