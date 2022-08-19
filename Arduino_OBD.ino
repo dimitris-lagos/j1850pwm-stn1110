@@ -1,13 +1,16 @@
 #include <SoftwareSerial.h> //Χρήση της βιβλιοθήκης που δίνει την δυνατότητα για σειριακή σύνδεση με υλοποίση επιπέδου λογισμικού
 #include <avr/wdt.h>        //Χρήση της βιβλιοθήκης υπεύθυνης για την λειτουργία του watchdog timer και συναρτήσεων καθυστέρησης
-#include <SPI.h>            //Χρήση βιβλιοθήκης για την διασύνδεση της κάρτας SD μέσω του πρωτοκόλλου επικοινωνίας Serial Peripheral Interface (SPI)
 #include <avr/pgmspace.h>   //Χρήση της EEPROM του ATmega328 για την αποθήκευση των String, ώστε να εξοικονομηθεί χώρος runtime στην sram
 #include <LiquidCrystal.h>  // Βιβλιοθήκη που διαχειρίζεται την διασύνδεση με την οθόνη LCD
-#include <avr/pgmspace.h>   //Χρήση της EEPROM του ATmega328 για την αποθήκευση των String, ώστε να εξοικονομηθεί χώρος runtime στην sram
+#include "global.h"
 #include "OBD_Interface.h"
 #include "LCD_Interface.h"
+#include "Debouncy.h"
 
 #define RED_LED 19
+#define VENTILATOR_PIN 9
+#define BUTTON_1_PIN 2
+#define BUTTON_2_PIN 3
 
 /* Η διασύνδεση:
 Button Digital Pin 16
@@ -16,23 +19,14 @@ Mosfet Digital Pin 9
 */
 /* Τμήμα δήλωσης global μεταβλητών */
 
-// char inByte;
-// int temp = 0;      //μεταβλητή αποθήκευσης θερμοκρασίας ψυκτικού υγρού
-// int temp2 = 0;     //μεταβλητή αποθήκευσης θερμοκρασίας κινητήρα
-// int temp3 = 0;     //μεταβλητή αποθήκευσης θερμοκρασίας Κυλίνδρων
-// int airtemp = 0;   //μεταβλητή αποθήκευσης θερμοκρασίας αέρα
-// int spd = 0;       //μεταβλητή αποθήκευσης ταχύτητας οχήματος
-// float fuel = 0.00; //μεταβλητή αποθήκευσης τιμής ποσότητας καυσίμου
-// float fuel_lvl = 0.00000;
-// float f2 = 0.00; //μεταβλητή αποθήκευσης
+Debouncy Debouncy_Buttons;
 int counter = 0;
-unsigned int active_dtcs = 0;
 float previous_cycle_sterm = 0.00;
 float total_cons = 0.00000;// Total consuumption of the vehicle for the current session
 float temp_cons = 0.00000;
 float real_time_cons = 0.00000;
-extern int stn_buffer[30];
 int menu = 0;
+boolean dtc = false;
 
 int threshold = 95;
 int temp_thresh = 95;
@@ -42,8 +36,6 @@ int analogPin = A3; // potentiometer wiper (middle terminal) connected to analog
 /* Αρχικοποίηση βιβλιοθήκης που διαχειρίζεται την επικοινωνία με την οθόνη,
  με τους ακροδέκτες του Arduino που συνδέονται στην οθόνη  */
 LiquidCrystal lcd(12, 13, 5, 14, 15, 16); // LiquidCrystal(rs, enable, d4, d5, d6, d7)
-int button1State = 0;
-int button2State = 0;
 
 /* Set timer1 interrupt at 1Hz */
 void setup_1hz_timer_interrupt(){
@@ -60,38 +52,32 @@ void setup_1hz_timer_interrupt(){
   TIMSK1 |= (1 << OCIE1A);
 }
 
-/* Setup button i/o pins and attach negative edge interrupts for button state change */
-void setup_button_io(){
-  pinMode(2, INPUT_PULLUP);                                    //Ορισμός ακροδέκτη 2 ως είσοδο, ενεργοποιώντας την αντίσταση τερματισμού(Κουμπί 1)
-  pinMode(3, INPUT_PULLUP);                                    //Ορισμός ακροδέκτη 3 ως είσοδο, ενεργοποιώντας την αντίσταση τερματισμού(Κουμπί 2)
-  attachInterrupt(digitalPinToInterrupt(2), button1, FALLING); /*Ορισμός διακοπής στην αρνητική ακμή του σήματος στον ακροδέκτη 2*/
-  attachInterrupt(digitalPinToInterrupt(3), button2, FALLING); /*Ορισμός διακοπής στην αρνητική ακμή του σήματος στον ακροδέκτη 3*/
-}
 
 /* Setup the i/o pin that drives the mosfet that turns on and off the fridge ventilator */
 void setup_ventilator_mosfet_driver_pin(){
-  pinMode(9, OUTPUT);   //Ορισμός ακροδέκτη 9 ως έξοδο ventilator mosfet
-  digitalWrite(9, LOW); // ventilator off
+  pinMode(VENTILATOR_PIN, OUTPUT);   //Ορισμός ακροδέκτη 9 ως έξοδο ventilator mosfet
+  digitalWrite(VENTILATOR_PIN, LOW); // ventilator off
 }
 
 /* Η συνάρτηση που αρχικοποιεί τις βασικές ρυθμίσεις για την διασύνδεση
  των περιφερειακών και των λειτουργιών του προγράμματος */
 void setup()
 {
+  Debouncy_Buttons.setupDebouncedButton(BUTTON_1_PIN, button1);
+  Debouncy_Buttons.setupDebouncedButton(BUTTON_2_PIN, button2);
   setup_ventilator_mosfet_driver_pin();
   init_STN_Serial_Interface();
   // set up the LCD's number of columns and rows:
   lcd.begin(LCD_NUMBER_OF_COLUMNS, LCD_NUMBER_OF_ROWS); //Ορισμός γραμμών και στηλών της οθόνης(2x16)
   pinMode(RED_LED, OUTPUT);                                  //Ορισμός ακροδέκτη 19 ως έξοδο(LED 1)
-  setup_button_io();
   setup_1hz_timer_interrupt();
 
   lcd.clear();
   digitalWrite(RED_LED, HIGH); // LED on
   delay(1000);            // Καθυστέρηση 1sec
   lcd.setCursor(0, 0);    /* μετακίνηση του κέρσορα στην πρώτη γραμμή και πρώτη στήλη της οθόνης */
-  lcd.write("Jiml OBD2"); /* Γράψε στην οθόνη το κείμενο εισαγωγής*/
-  digitalWrite(19, LOW);  // LED off
+  lcd.write(WELLCOME_TEXT); /* Γράψε στην οθόνη το κείμενο εισαγωγής*/
+  digitalWrite(RED_LED, LOW);  // LED off
   delay(1000);
   wait_for_STN_ready();
   setup_STN_communication_properties();
@@ -127,36 +113,20 @@ ISR(TIMER1_COMPA_vect)
 
 void loop()
 {
-
-  /* Το πρόγραμμα περιέχει 4 σελίδες προβολής πληροφοριών στην οθόνη.
-   Το κουμπί 1 αλλάζει μεταξύ των σελίδων 1 ως 3.
-   Το κουμπί 2 ενεργοποιεί την σελίδα 4 που περιέχει τους κωδικούς σφαλμάτων */
-  if (button1State == 1)
-  {
-    delay(100);
-    ++menu;
-    button1State = 0;
-    if (menu == 4)
-    {
-      menu = 0;
-    }
-    sei();
-  } /* Αν πατηθεί το κουμπί 1, πήγαινε στην επόμενη σελίδα  */
-  if (button2State == 1)
-  {
-    delay(100);
-    button2State = 0;
-    read_dtc();
-  } /* Αν πατηθεί το κουμπί 2, πήγαινε στην σελίδα κωδικών σφαλμάτων */
   read_temp_threshold();
   int coolant_temp = read_coolant_temperature();//Διάβασε την θερμοκρασία του οχήματος
   float fuel_consumption = calculate_fuel_consumption();
+  float milage = calculate_milage(fuel_consumption);
+  if(dtc){
+    dtc = false;
+    read_dtc();
+  }
   switch (menu)
   {
   case 0: //Επίλεξε σελίδα πληροφοριών 1
     char battery_voltage[6];
     read_battery_voltage(battery_voltage);
-    send_page1_to_lcd(coolant_temp, battery_voltage, fuel_consumption);    //Στείλε τα δεδομένα στην οθόνη
+    send_page1_to_lcd(coolant_temp, battery_voltage, fuel_consumption, milage);    //Στείλε τα δεδομένα στην οθόνη
     break;
   case 1: //Επίλεξε σελίδα πληροφοριών 2
     send_page2_to_lcd(read_fuel_lvl(), read_fstat());        //Στείλε τα δεδομένα στην οθόνη
@@ -169,18 +139,27 @@ void loop()
   case 3: //Επίλεξε σελίδα πληροφοριών 3
     send_page4_to_lcd(read_maf(), read_oxvolts(), previous_cycle_sterm, read_fterm());        //Στείλε τα δεδομένα στην οθόνη
     break;
+  // case 4:
+  //  send_page5_to_lcd(medium_milage);
+  //  break;
   }
-  delay(50);
+  delay(10);
 }
 
  /* Συνάρτηση που διαχειρίζεται το πάτημα του κουμπιού 1 */
-void button1(){
-  cli();
-  button1State = 1;
+void button1(unsigned int holdTime){
+    ++menu;
+    if (menu == 4){
+      menu = 0;
+    }
+    delay(20);
 }
 
 /* Συνάρτηση που διαχειρίζεται το πάτημα του κουμπιού 2 */
-void button2() { button2State = 1; } 
+void button2(unsigned int holdTime) {
+    delay(50);
+    dtc = true;
+} 
 
 
 void read_temp_threshold()
@@ -232,12 +211,12 @@ void check_coolant_temperature_threshold(int temperature)
   if (temperature > threshold && temperature < 250)
   {
     digitalWrite(RED_LED, HIGH);
-    digitalWrite(9, HIGH);
+    digitalWrite(VENTILATOR_PIN, HIGH);
   } /* Αν η θερμοκρασία του ψυκτικού είναι μεγαλύτερη του threshold, άναψε το LED 2 και άνοιξε το ventilator*/
   else
   {
     digitalWrite(RED_LED, LOW);
-    digitalWrite(9, LOW);
+    digitalWrite(VENTILATOR_PIN, LOW);
   }
 }
 
@@ -249,30 +228,42 @@ float calculate_fuel_consumption()
 {
   float maf = read_maf();
   int spd = read_vehicle_speed();
+  cli();
   float consumption = 0.00;
-  real_time_cons = (maf / 10437.00000) * (1 + (previous_cycle_sterm / 100));
+  real_time_cons = ((maf / 10437.00000) * (1 + (previous_cycle_sterm / 100)) * DEVIATION_FACTOR);// After testing my car consumed 17% more fuel.
   if (spd > 0)
   {
     consumption = (spd / 3600.00) / real_time_cons; //(spd/3600)*((14,7*710)/maf);
     //milage = 100.00 / cons;
   }
-  previous_cycle_sterm = read_sterm(); //Διαβάζουμε έδω το short term fuel trim για να εφαρμοστεί στον επόμενο κύκλο
-  cli();
   temp_cons += real_time_cons;
   ++counter;
   sei();
+  previous_cycle_sterm = read_sterm(); //Διαβάζουμε έδω το short term fuel trim για να εφαρμοστεί στον επόμενο κύκλο
   return consumption;
 }
 
 
 
-
+// void send_page5_to_lcd(float milage){
+//   lcd.clear();
+//     if (milage >= 10)
+//   {
+//     lcd.setCursor(6, 0);
+//   }
+//   else
+//   {
+//     lcd.setCursor(7, 0);
+//   }
+//   lcd.print(milage, 1);
+//   lcd.print(" L/100");
+// }
 
 /* Συνάρτηση η οποία εμφανίζει τα δεδομένα της πρώτης σελίδας στην οθόνη */
 /*Αναλόγως πόσα ψηφία έχει η τιμή, βάζει τον κέρσορα στη σωστή θέση της
 οθόνης ώστε οι πληροφορίες να είναι ευανάγνωστες. Επίσης εκτυπώνει τις μονάδες
 των τιμών στα σωστά σημεία*/
-void send_page1_to_lcd(int coolant_temperature, char* bat, float cons)
+void send_page1_to_lcd(int coolant_temperature, char* bat, float cons, float milage)
 {
   int i = 0;
   lcd.clear();
@@ -296,14 +287,13 @@ void send_page1_to_lcd(int coolant_temperature, char* bat, float cons)
   }
   lcd.print(coolant_temperature, DEC);
   lcd.print("C  ");
-  float milage = calculate_milage(cons);
-  if (milage < 10)
+  if (milage >= 10)
   {
-    lcd.setCursor(7, 0);
+    lcd.setCursor(6, 0);
   }
   else
   {
-    lcd.setCursor(6, 0);
+    lcd.setCursor(7, 0);
   }
   lcd.print(milage, 1);
   lcd.print(" L/100");
@@ -394,6 +384,7 @@ void read_dtc()
 {
   int i = 1;
   char tmp[2];
+  unsigned int active_dtcs = 0;
   /* Διαβάζει 4 byte: Α, Β, C και D
   Το πρώτο byte (A) περιέχει δύο στοιχεία.
   Το Bit A7 (MSB του byte A, το πρώτο byte) δείχνει εάν το MIL (λαμπάκι βλάβης του κινητήρα)
@@ -467,7 +458,7 @@ void read_dtc()
       }
     }
 
-    delay(10000); //Πάγωσε την οθόνη για 3" ώστε ο χρήστης να προλάβει να διαβάσει
+    delay(8000); //Πάγωσε την οθόνη για 8" ώστε ο χρήστης να προλάβει να διαβάσει
   }
   else
   {

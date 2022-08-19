@@ -1,8 +1,7 @@
 #include "OBD_Interface.h"
 
-int stn_buffer[30];
 char inByte;
-
+int stn_buffer[30];
 void init_STN_Serial_Interface(){
     Serial.begin(115200); //Εκίνηση της σειριακής επικοινωνίας με το STN1110 Baud 115200
 }
