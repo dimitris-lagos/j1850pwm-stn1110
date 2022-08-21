@@ -1,7 +1,7 @@
 #include "OBD_Interface.h"
 
 char inByte;
-int stn_buffer[30];
+int stn_buffer[16];
 void init_STN_Serial_Interface(){
     Serial.begin(115200); //Εκίνηση της σειριακής επικοινωνίας με το STN1110 Baud 115200
 }
@@ -203,4 +203,26 @@ void read_Ford_specific_temperatures(FordSpecificTemperatures *fordTemps)
 
   fordTemps->cylinder_temperature = temp2;
   fordTemps->uknown_temperature = temp3;
+}
+
+bool check_mil(){
+  stn_com("0101");
+  if (stn_buffer[2] & 0b10000000){
+    return true;
+  }
+  return false;
+}
+
+int get_dtc_number(){
+  stn_com("0101");
+  if (stn_buffer[2] & 0b10000000){ // if we got MIL ON and active DTCs
+    return stn_buffer[2] - 0x80; // byte-128 to find how many active dtcs exist cause of mil bit
+  }
+  else{
+    return stn_buffer[2] & 0b01111111;
+  }
+}
+
+void read_active_dtc(){
+  stn_com("03"); // Mode 03 – Δίαβασε DTCs (Diagnostic Trouble Codes), δεν χρειάζεται PID
 }

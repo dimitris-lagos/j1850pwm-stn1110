@@ -11,6 +11,9 @@ typedef struct FordSpecificTemperatures{
 
 }FordSpecificTemperatures; 
 
+//global variable holding the last data stn sent
+extern int stn_buffer[16];
+
 unsigned int hexToDec(String hexString);
 void stn_com(char *str);
 void wait_for_STN_ready();
@@ -26,4 +29,7 @@ float read_maf();
 char* read_battery_voltage(char *bat);
 void init_STN_Serial_Interface();
 void read_Ford_specific_temperatures(FordSpecificTemperatures *fordTemps);
+bool check_mil();
+int get_dtc_number();
+void read_active_dtc();
 #endif

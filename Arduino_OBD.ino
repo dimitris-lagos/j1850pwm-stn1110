@@ -384,7 +384,7 @@ void read_dtc()
 {
   int i = 1;
   char tmp[2];
-  unsigned int active_dtcs = 0;
+
   /* Διαβάζει 4 byte: Α, Β, C και D
   Το πρώτο byte (A) περιέχει δύο στοιχεία.
   Το Bit A7 (MSB του byte A, το πρώτο byte) δείχνει εάν το MIL (λαμπάκι βλάβης του κινητήρα)
@@ -394,23 +394,13 @@ void read_dtc()
   διαθεσιμότητα και την πληρότητα ορισμένων δοκιμών επί του οχήματος*/
   lcd.clear();
   lcd.setCursor(0, 0);
-  stn_com("0101");
-  if (stn_buffer[2] & 0b10000000)
-  {                                     // if we got MIL ON and active DTCs
-    active_dtcs = stn_buffer[2] - 0x80; // byte-128 to find how many active dtcs exist cause of mil bit
-    lcd.print("MIL is ON!");
-    delay(2000);
-    lcd.clear();
-    lcd.setCursor(0, 0);
-  }
-  else
-    active_dtcs = stn_buffer[2] & 0b01111111;
+  unsigned int active_dtcs = get_dtc_number();
   if (active_dtcs)
   {
     lcd.print(active_dtcs);
     lcd.print(" DTCs FOUND!");
     delay(3000);   //Πάγωσε την οθόνη για 3" ώστε ο χρήστης να προλάβει να διαβάσει
-    stn_com("03"); // Mode 03 – Δίαβασε DTCs (Diagnostic Trouble Codes), δεν χρειάζεται PID
+    read_active_dtc();
     lcd.clear();
     lcd.setCursor(0, 0);
     for (int j = 1; j <= active_dtcs; j++)

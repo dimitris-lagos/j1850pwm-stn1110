@@ -2,6 +2,11 @@
 
 static void nothing(unsigned int) {
 }
+/* Qualified volatile because the values of intFunc change inside ISRs.
+ * Volatile informs the compiler to store the variable inside the stack
+ * of the SRAM. Declared static so it can be statically accessed from the
+ * class functions.
+ */
 static volatile voidFuncPtr intFunc[] = {nothing, nothing};
 unsigned long timeDiff[2] = {0,0};
 
@@ -12,7 +17,9 @@ Debouncy::Debouncy()
 Debouncy::~Debouncy()
 {
 }
-
+/*
+ * void (*callbackFunction)(unsigned int) : void function with unsigned int parameter
+ */
 void Debouncy::setupDebouncedButton(int arduinoButtonPin, void (*callbackFunction)(unsigned int)){
     if(arduinoButtonPin == INT0PIN ){
         pinMode(INT0PIN, INPUT_PULLUP); 
